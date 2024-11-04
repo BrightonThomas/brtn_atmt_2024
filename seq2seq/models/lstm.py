@@ -26,7 +26,7 @@ class LSTMModel(Seq2SeqModel):
         parser.add_argument('--encoder-num-layers', type=int, help='number of encoder layers')
         parser.add_argument('--encoder-bidirectional', help='bidirectional encoder')
         parser.add_argument('--encoder-dropout-in', help='dropout probability for encoder input embedding')
-        parser.add_argument('--encoder-dropout-out', help='dropout probability for encoder output')
+        # parser.add_argument('--encoder-dropout-out', help='dropout probability for encoder output')
 
         parser.add_argument('--decoder-embed-dim', type=int, help='decoder embedding dimension')
         parser.add_argument('--decoder-embed-path', help='path to pre-trained decoder embedding')
@@ -35,7 +35,7 @@ class LSTMModel(Seq2SeqModel):
         parser.add_argument('--decoder-dropout-in', type=float, help='dropout probability for decoder input embedding')
         parser.add_argument('--decoder-dropout-out', type=float, help='dropout probability for decoder output')
         parser.add_argument('--decoder-use-attention', help='decoder attention')
-        parser.add_argument('--decoder-use-lexical-model', help='toggle for the lexical model')
+        # parser.add_argument('--decoder-use-lexical-model', help='toggle for the lexical model')
 
     @classmethod
     def build_model(cls, args, src_dict, tgt_dict):
@@ -223,9 +223,17 @@ class LSTMDecoder(Seq2SeqDecoder):
 
         self.use_lexical_model = use_lexical_model
         if self.use_lexical_model:
-            # __LEXICAL: Add parts of decoder architecture corresponding to the LEXICAL MODEL here
-            pass
-            # TODO: --------------------------------------------------------------------- /CUT
+            lexical_embed_dim = int(len(dictionary) * 0.01)
+            combined_context_dim = lexical_embed_dim + embed_dim  # Combined dim of lexical and source embeddings
+
+            self.lexical_embedding = nn.Embedding(len(dictionary), lexical_embed_dim)
+            self.lexical_projection = nn.Linear(combined_context_dim, 128)
+            self.projection_layer = nn.Linear(128, len(dictionary))
+
+            if is_cuda:
+                self.lexical_embedding.cuda()
+                self.lexical_projection.cuda()
+                self.projection_layer.cuda()
 
     def forward(self, tgt_inputs, encoder_out, incremental_state=None):
         """ Performs the forward pass through the instantiated model. """
@@ -289,13 +297,25 @@ class LSTMDecoder(Seq2SeqDecoder):
                 input_feed, step_attn_weights = self.attention(tgt_hidden_states[-1], src_out, src_mask)
                 attn_weights[:, j, :] = step_attn_weights
 
-                if self.use_lexical_model:
-                    # __LEXICAL: Compute and collect LEXICAL MODEL context vectors here
-                    # TODO: --------------------------------------------------------------------- CUT
-                    pass
-                    # TODO: --------------------------------------------------------------------- /CUT
+            if self.use_lexical_model:
+                # __LEXICAL: Compute and collect LEXICAL MODEL context vectors here
+                lexical_embedding = self.lexical_embedding(tgt_inputs[:, j].to('cuda'))
+
+                if src_mask is not None:
+                    masked_weights = step_attn_weights.masked_fill(src_mask.transpose(0, 1), 0)
+                else:
+                    masked_weights = step_attn_weights
+
+                weighted_src_embeddings = torch.bmm(masked_weights.unsqueeze(1), src_embeddings.transpose(0, 1))
+                weighted_src_embeddings = weighted_src_embeddings.squeeze(1)
+
+                combined_context = torch.cat([lexical_embedding, weighted_src_embeddings], dim=1)
+                lexical_context = self.lexical_projection(combined_context)
+
+                lexical_contexts.append(lexical_context)
 
             input_feed = F.dropout(input_feed, p=self.dropout_out, training=self.training)
+
             rnn_outputs.append(input_feed)
 
         # Cache previous states (only used during incremental, auto-regressive generation)
@@ -312,9 +332,11 @@ class LSTMDecoder(Seq2SeqDecoder):
         decoder_output = self.final_projection(decoder_output)
 
         if self.use_lexical_model:
-            # __LEXICAL: Incorporate the LEXICAL MODEL into the prediction of target tokens here
-            pass
-            # TODO: --------------------------------------------------------------------- /CUT
+            lexical_context_tensor = torch.stack(lexical_contexts, dim=1)
+            lexical_context_projected = self.projection_layer(lexical_context_tensor)
+
+            # Combine lexical context with decoder output
+            decoder_output += lexical_context_projected
 
 
         return decoder_output, attn_weights

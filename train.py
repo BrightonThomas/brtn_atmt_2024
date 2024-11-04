@@ -25,6 +25,9 @@ def get_args():
     parser.add_argument('--max-tokens', default=None, type=int, help='maximum number of tokens in a batch')
     parser.add_argument('--batch-size', default=1, type=int, help='maximum number of sentences in a batch')
     parser.add_argument('--train-on-tiny', action='store_true', help='train model on a tiny dataset')
+    parser.add_argument('--encoder-dropout-out', default=0.1,help='dropout probability for encoder output')
+    parser.add_argument('--decoder-use-lexical-model', default='True',help='toggle for the lexical model')
+    # parser.add_argument('--encoder-dropout-in', default=0.4, help='dropout probability for encoder input embedding')
 
     # Add model arguments
     parser.add_argument('--arch', default='lstm', choices=ARCH_MODEL_REGISTRY.keys(), help='model architecture')
